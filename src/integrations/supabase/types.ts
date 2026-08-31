@@ -14,7 +14,84 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      loopline_scanner_cron_secret: {
+        Row: {
+          created_at: string
+          id: number
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          token?: string
+        }
+        Relationships: []
+      }
+      loopline_scanner_state: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          failure_count: number
+          id: number
+          instruments: Json
+          last_completed_at: string | null
+          last_started_at: string | null
+          lease_id: string | null
+          lease_until: string | null
+          market_fetched_at: string | null
+          opportunities: Json
+          pause_reason: string | null
+          paused: boolean
+          settings: Json
+          status: string
+          tickers: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          failure_count?: number
+          id?: number
+          instruments?: Json
+          last_completed_at?: string | null
+          last_started_at?: string | null
+          lease_id?: string | null
+          lease_until?: string | null
+          market_fetched_at?: string | null
+          opportunities?: Json
+          pause_reason?: string | null
+          paused?: boolean
+          settings?: Json
+          status?: string
+          tickers?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          failure_count?: number
+          id?: number
+          instruments?: Json
+          last_completed_at?: string | null
+          last_started_at?: string | null
+          lease_id?: string | null
+          lease_until?: string | null
+          market_fetched_at?: string | null
+          opportunities?: Json
+          pause_reason?: string | null
+          paused?: boolean
+          settings?: Json
+          status?: string
+          tickers?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
