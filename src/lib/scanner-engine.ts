@@ -118,37 +118,10 @@ export const UNIVERSE_COPY: Record<Universe, { tag: string; hero: string; pairLa
     convertLegs: "Any asset hops off spot",
   },
 };
-/** Work units processed per animation frame while the incremental scan runs. */
-
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Loopline — Bybit Arbitrage Scanner" },
-      { name: "description", content: "Live triangular arbitrage scanner for Bybit crypto spot markets." },
-      { property: "og:title", content: "Loopline — Bybit Arbitrage Scanner" },
-      { property: "og:description", content: "Live triangular arbitrage scanner for Bybit crypto spot markets." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: Scanner,
-});
 
 function parseNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatPrice(value: number) {
-  if (!value) return "—";
-  if (value >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (value >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  return value.toLocaleString(undefined, { maximumSignificantDigits: 5 });
-}
-
-function formatPercent(value: number) {
-  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(3)}%`;
-}
 
 type Edge = { to: string; symbol: string; side: "Sell" | "Buy" | "Convert"; rate: number; price: number; stock: boolean; volume: number };
 
@@ -212,7 +185,6 @@ function buildUsdIndex(instruments: Instrument[], tickers: Ticker[]) {
   }
   return { usd, turnover, stocks, convertible };
 }
-
 
 /**
  * A scan pass over the whole platform. Two complementary searches, both exhaustive:
