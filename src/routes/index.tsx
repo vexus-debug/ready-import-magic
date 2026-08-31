@@ -3,128 +3,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ChevronDown, CircleHelp, Clock3, ExternalLink, Gauge, GitBranch, Info, LayoutGrid, RefreshCw, Search, Settings2, SlidersHorizontal, Star, WalletCards, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-
-type Instrument = {
-  symbol: string;
-  baseCoin: string;
-  quoteCoin: string;
-  status: string;
-  symbolType?: string;
-};
-
-type Ticker = {
-  symbol: string;
-  bid1Price: string;
-  ask1Price: string;
-  lastPrice: string;
-  price24hPcnt: string;
-  turnover24h: string;
-};
+import { supabase } from "@/integrations/supabase/client";
+import { scanMarket, universeFilter, UNIVERSE_COPY, type Instrument, type Leg, type Opportunity, type Ticker, type Universe } from "@/lib/scanner-engine";
 
 type MarketResponse = { fetchedAt: string; instruments: Instrument[]; tickers: Ticker[] };
-type Leg = { symbol: string; from: string; to: string; side: "Sell" | "Buy" | "Convert"; price: number; stock: boolean };
-type Opportunity = { id: string; assets: string[]; legs: Leg[]; gross: number; net: number; volume: number; stock: boolean; stocks: number; converts: number };
-
-const REFRESH_MS = 10_000;
+type ScannerState = { market_fetched_at: string | null; instruments: Instrument[]; tickers: Ticker[]; opportunities: Opportunity[]; status: string; error_message: string | null; last_completed_at: string | null };
 const DEFAULT_FEE = 0.001;
 const DEFAULT_CONVERT_SPREAD = 0.002;
-/** Safety ceiling on DFS expansions per start asset; only trips on pathological fan-out. */
-const WORK_BUDGET = 4_000_000;
-/** Spot legs kept in the convert-bridge pool (turnover-filtered, ranked by USD-normalised gain). */
-const CONVERT_POOL = 90;
-/** Fiat currencies quoted on Bybit spot — excluded so the scanner only ever touches crypto. */
-const FIAT = new Set([
-  "USD", "EUR", "GBP", "JPY", "KRW", "AUD", "CAD", "CHF", "NZD", "BRL", "TRY", "PLN", "CZK", "DKK", "HUF", "NOK", "SEK", "RON",
-  "ARS", "MXN", "UAH", "RUB", "NGN", "KES", "ZAR", "AED", "SAR", "ILS", "HKD", "SGD", "TWD", "IDR", "INR", "PHP", "VND", "THB",
-  "MYR", "KZT", "GEL", "MNT", "BDT", "PKR", "LKR", "EGP", "MAD", "DZD", "TND", "QAR", "KWD", "BHD", "OMR", "JOD", "COP", "CLP",
-  "PEN", "UYU", "PYG", "BOB", "GTQ", "DOP", "CRC", "PAB", "NIO", "HNL", "SVC", "GYD", "BBD", "XCD", "JMD", "TTD", "BSD", "BZD",
-  "BWP", "MZN", "ZMW", "TZS", "UGX", "GHS", "XOF", "XAF", "CDF", "RWF", "BIF", "DJF", "ETB", "MGA", "MUR", "SCR", "KMF", "SLL",
-  "LRD", "GMD", "GNF", "HTG", "CUP", "VES", "NPR", "AFN", "MMK", "KHR", "LAK", "MOP", "BND", "FJD", "PGK", "WST", "TOP", "SBD",
-  "VUV", "ISK", "GIP", "FKP", "SHP", "GGP", "JEP", "IMP", "BAM", "MKD", "RSD", "MDL", "ALL", "BYN", "TMT", "TJS", "KGS", "UZS",
-  "AZN", "AMD", "IQD", "LBP", "SYP", "YER", "LYD", "SDG", "SSP", "ERN", "SOS", "MRU", "STN", "CVE", "AOA", "NAD", "LSL", "SZL",
-]);
-/** Crypto-only universe: drops tokenized stock (xStocks) and fiat-quoted instruments. */
-const isCryptoInstrument = (instrument: Instrument) =>
-  instrument.symbolType !== "xstocks" && !FIAT.has(instrument.baseCoin) && !FIAT.has(instrument.quoteCoin);
-/** Crypto + fiat universe: keeps crypto and fiat-quoted pairs, drops tokenized stocks. */
-const isCryptoFiatInstrument = (instrument: Instrument) =>
-  instrument.symbolType !== "xstocks";
-/** Crypto + stocks universe: keeps crypto and xStock pairs, drops fiat-quoted instruments. */
-const isCryptoStockInstrument = (instrument: Instrument) =>
-  !FIAT.has(instrument.baseCoin) && !FIAT.has(instrument.quoteCoin);
-/** Stocks + fiat universe: keeps tokenized stocks and fiat-quoted pairs, drops pure crypto-crypto instruments. */
-const isStocksFiatInstrument = (instrument: Instrument) =>
-  instrument.symbolType === "xstocks" || FIAT.has(instrument.baseCoin) || FIAT.has(instrument.quoteCoin);
-/** xStocks universe: tokenized stocks quoted in USDT — the only crypto allowed on these routes. */
-const isXstockInstrument = (instrument: Instrument) =>
-  instrument.symbolType === "xstocks" && instrument.quoteCoin === "USDT" && !FIAT.has(instrument.baseCoin);
-type Universe = "crypto" | "crypto-fiat" | "crypto-stocks" | "stocks-fiat" | "xstocks" | "cross";
-/** Per-universe filter. */
-const universeFilter: Record<Universe, (instrument: Instrument) => boolean> = {
-  crypto: isCryptoInstrument,
-  "crypto-fiat": isCryptoFiatInstrument,
-  "crypto-stocks": isCryptoStockInstrument,
-  "stocks-fiat": isStocksFiatInstrument,
-  xstocks: isXstockInstrument,
-  cross: () => true,
-};
-const UNIVERSE_COPY: Record<Universe, { tag: string; hero: string; pairLabel: string; spotLabel: string; assetLabel: string; excludedLabel: string; convertLegs: string }> = {
-  crypto: {
-    tag: "CRYPTO",
-    hero: "Triangular routes across every crypto coin quoted on Bybit spot — no fiat, no tokenized stocks.",
-    pairLabel: "Crypto pairs",
-    spotLabel: "Crypto spot",
-    assetLabel: "Crypto coins",
-    excludedLabel: "Fiat & stocks",
-    convertLegs: "Coin → coin hops off spot",
-  },
-  "crypto-fiat": {
-    tag: "₿↔$",
-    hero: "Routes bridging crypto and fiat-quoted pairs on Bybit spot — no tokenized stocks.",
-    pairLabel: "Crypto + fiat pairs",
-    spotLabel: "Crypto + fiat spot",
-    assetLabel: "Crypto & fiat",
-    excludedLabel: "Tokenized stocks",
-    convertLegs: "Crypto ↔ fiat hops off spot",
-  },
-  "crypto-stocks": {
-    tag: "₿↔xS",
-    hero: "Routes bridging crypto and tokenized stocks on Bybit spot — no fiat currencies.",
-    pairLabel: "Crypto + stock pairs",
-    spotLabel: "Crypto + stock spot",
-    assetLabel: "Crypto & xStocks",
-    excludedLabel: "Fiat currencies",
-    convertLegs: "Crypto ↔ xStock hops off spot",
-  },
-  "stocks-fiat": {
-    tag: "xS↔$",
-    hero: "Routes bridging tokenized stocks and fiat-quoted pairs on Bybit spot — pure crypto-crypto pairs excluded.",
-    pairLabel: "Stocks + fiat pairs",
-    spotLabel: "Stocks + fiat spot",
-    assetLabel: "xStocks & fiat",
-    excludedLabel: "Pure crypto",
-    convertLegs: "Stock ↔ fiat hops off spot",
-  },
-  xstocks: {
-    tag: "xS↔₮",
-    hero: "xStock-to-xStock routes on Bybit spot, routed through USDT — the only crypto allowed on these cycles.",
-    pairLabel: "xStock pairs",
-    spotLabel: "xStock spot",
-    assetLabel: "xStocks",
-    excludedLabel: "Fiat & other crypto",
-    convertLegs: "xStock ↔ USDT hops off spot",
-  },
-  cross: {
-    tag: "ALL",
-    hero: "Cross-asset routes spanning crypto, tokenized stocks, and fiat-quoted pairs on Bybit spot.",
-    pairLabel: "All pairs",
-    spotLabel: "Full spot book",
-    assetLabel: "Base assets",
-    excludedLabel: "Nothing",
-    convertLegs: "Any asset hops off spot",
-  },
-};
-/** Work units processed per animation frame while the incremental scan runs. */
 
 export const Route = createFileRoute("/")({
   head: () => ({
